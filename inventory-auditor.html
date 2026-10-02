@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inventory Auditor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        :root {
+            --bg: var(--card, #fff);
+            --text: var(--foreground, #000);
+            --border-clr: var(--border, #ccc);
+            --accent-clr: var(--accent, #007bff);
+        }
+        body { font-family: sans-serif; background: transparent; color: var(--text); margin: 20px; }
+        .container { max-width: 900px; margin: auto; background: var(--bg); padding: 20px; border-radius: 8px; border: 1px solid var(--border-clr); }
+        .upload-section { border: 2px dashed var(--border-clr); padding: 20px; text-align: center; margin-bottom: 20px; cursor: pointer; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid var(--border-clr); padding: 8px; text-align: left; }
+        th { background: rgba(0,0,0,0.05); }
+        input[type="number"], input[type="text"] { width: 100%; padding: 5px; box-sizing: border-box; background: transparent; color: inherit; border: 1px solid var(--border-clr); }
+        .status-match { color: #28a745; font-weight: bold; }
+        .status-less { color: #dc3545; font-weight: bold; }
+        .status-excess { color: #fd7e14; font-weight: bold; }
+        .btn { padding: 10px 20px; background: var(--accent-clr); color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 10px; }
+        .btn-print { background: #6c757d; }
+        @media print {
+            .no-print, .upload-section, .btn, input::placeholder { display: none !important; }
+            body { margin: 0; padding: 0; }
+            .container { border: none; width: 100%; max-width: none; }
+            table { border: 1px solid #000; }
+            th, td { border: 1px solid #000; color: #000 !important; }
+            .print-only-row { display: table-row !important; }
+            tr:not(.has-input) { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Inventory Audit App</h2>
+        <div class="no-print" style="margin-bottom:10px;">
+            <input type="date" id="auditDate">
+            <button class="btn" onclick="saveData()">Save Progress</button>
+            <button class="btn" onclick="loadData()">Load Last Saved</button>
+        </div>
+        
+        <div class="upload-section no-print" onclick="document.getElementById('fileInput').click()">
+            <p>Click or Drop Excel File Here (inventory 2-10-26.xlsx)</p>
+            <input type="file" id="fileInput" accept=".xlsx, .xls" style="display:none">
+        </div>
+
+        <div id="auditTableContainer">
+            <table id="inventoryTable">
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th>Expected (Excel)</th>
+                        <th>Unit</th>
+                        <th class="no-print">Actual Entry</th>
+                        <th>Diff</th>
+                        <th>Status/Reason</th>
+                    </tr>
+                </thead>
+                <tbody id="inventoryBody">
+                    <!-- Rows injected here -->
+                </tbody>
+            </table>
+        </div>
+
+        <div class="no-print">
+            <button class="btn btn-print" onclick="window.print()">Print Audit Report</button>
+        </div>
+    </div>
+
+    <script>
+        function saveData() {
+            const date = document.getElementById('auditDate').value || new Date().toISOString().split('T')[0];
+            const dataToSave = {};
+            document.querySelectorAll('input[type="number"], input[type="text"]').forEach(input => {
+                dataToSave[input.id] = input.value;
+            });
+            localStorage.setItem('inventory_audit_' + date, JSON.stringify(dataToSave));
+            alert('Saved to browser for ' + date);
+        }
+
+        function loadData() {
+            const date = document.getElementById('auditDate').value;
+            if (!date) return alert('Select date first');
+            const saved = localStorage.getItem('inventory_audit_' + date);
+            if (!saved) return alert('No data for this date');
+            const data = JSON.parse(saved);
+            Object.keys(data).forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.value = data[id];
+                    if (el.type === 'number') el.dispatchEvent(new Event('input'));
+                }
+            });
+        }
+
+        let inventoryData = [];
+
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const json = XLSX.utils.sheet_to_json(firstSheet);
+                processData(json);
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        function processData(data) {
+            const body = document.getElementById('inventoryBody');
+            body.innerHTML = '';
+            inventoryData = data;
+
+            data.forEach((row, index) => {
+                const name = row['Raw Material'] || row['Item Name'];
+                const expectedStr = String(row['Available Stock'] || 0);
+                const unit = row['Purchase Unit'] || '';
+
+                if (!name) return;
+
+                const expectedVal = parseFloat(expectedStr.replace(/[^\d.]/g, '')) || 0;
+
+                const tr = document.createElement('tr');
+                tr.id = `row-${index}`;
+                tr.innerHTML = `
+                    <td>${name}</td>
+                    <td>${expectedVal}</td>
+                    <td>${unit}</td>
+                    <td class="no-print">
+                        <input type="number" step="any" placeholder="Enter actual" oninput="calculateDiff(${index}, ${expectedVal})">
+                    </td>
+                    <td id="diff-${index}">-</td>
+                    <td id="status-${index}">
+                        <input type="text" placeholder="Reason (Optional)" id="reason-${index}">
+                    </td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        function calculateDiff(index, expected) {
+            const row = document.getElementById(`row-${index}`);
+            const input = row.querySelector('input[type="number"]');
+            const diffCell = document.getElementById(`diff-${index}`);
+            const statusCell = document.getElementById(`status-${index}`);
+            const actual = parseFloat(input.value);
+
+            if (isNaN(actual)) {
+                row.classList.remove('has-input');
+                diffCell.innerText = '-';
+                return;
+            }
+
+            row.classList.add('has-input');
+            const diff = actual - expected;
+            diffCell.innerText = diff.toFixed(2);
+
+            let status = '';
+            let cls = '';
+            if (diff === 0) {
+                status = 'MATCHED';
+                cls = 'status-match';
+            } else if (diff < 0) {
+                status = 'LESS (Shortage)';
+                cls = 'status-less';
+            } else {
+                status = 'EXCESS';
+                cls = 'status-excess';
+            }
+
+            const reasonInput = document.getElementById(`reason-${index}`);
+            statusCell.innerHTML = `<span class="${cls}">${status}</span><br><small class="no-print">${reasonInput.outerHTML}</small><span class="print-only" style="display:none">${reasonInput.value}</span>`;
+
+            const newReasonInput = statusCell.querySelector('input');
+            if (newReasonInput) {
+                newReasonInput.oninput = () => {
+                    statusCell.querySelector('.print-only').innerText = newReasonInput.value;
+                };
+            }
+        }
+    </script>
+</body>
+</html>
