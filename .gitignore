@@ -1,0 +1,21 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Output workbooks & backups
+*.xlsx
+*.xls
+backup_inventory_*.xlsx
+production+closing=yersterday.xlsx
+
+# Environments
+.venv/
+env/
+venv/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
